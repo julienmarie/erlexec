@@ -635,19 +635,25 @@ init([Options]) ->
             {error, Err} ->
                 throw("Cannot find file " ++ Exe0 ++ ": " ++ file:format_error(Err))
             end,
+    SGID  = case file:read_file_info(Exe0) of
+                {ok, Info2} ->
+                    (Info2#file_info.mode band 16#400) =:= 16#400;
+                {error, Err2} ->
+                    throw("Cannot find file " ++ Exe0 ++ ": " ++ file:format_error(Err2))
+            end,
     IsRoot= os:getenv("USER") =:= "root",
     {Exe,Msg} =
-            if (SUID orelse Root orelse IsRoot) andalso User =:= undefined ->
+            if (SUID orelse SGID orelse Root orelse IsRoot) andalso User =:= undefined ->
                 % Don't allow to run port program with SUID bit without effective user set!
                 throw("Port program " ++ Exe0 ++
                       " with SUID bit set is not allowed to run without setting effective user!");
             not Root, User =/= undefined ->
                 % Running as another effective user
                 U = if is_atom(User) -> atom_to_list(User); true -> User end,
-                {lists:append(["/usr/bin/sudo -u ", U, " ", Exe0, Args]), undefined};
-            Root, User =/= undefined, User =/= root, User =/= "root", User =/= 0 ->
+                {lists:append(["/usr/local/bin/sudo -u ", U, " ", Exe0, Args]), undefined};
+            Root, User =/= undefined ->
                 % Running as root that will switch to another effective user with SUID support
-                {lists:append(["/usr/bin/sudo ", Exe0, " -suid", Args]), undefined};
+                {lists:append(["/usr/local/bin/sudo ", Exe0, " -suid", Args]), undefined};
             true ->
                 {Exe0 ++ Args, undefined}
             end,

@@ -5,6 +5,9 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% all() -> [test_monitor, test_100_monitors, test_1000_monitors].
+all() -> [test_wheel].
+
 -define(receiveMatch(A, Timeout),
     (fun() ->
         receive
@@ -25,10 +28,8 @@
                 end
         end)(Count)).
 
-all() -> [test_monitor, test_100_monitors, test_1000_monitors].
-
 init_per_suite(Config) ->
-    ok = application:ensure_started(erlexec),
+    %% ok = application:ensure_started(erlexec),
     Config.
 
 end_per_suite(_Config) ->
@@ -58,3 +59,8 @@ test_1000_monitors(Config) ->
     PIDs = [spawn(fun() -> monit(Parent, 5000) end) || _ <- lists:seq(0, 999)],
     ?recv_n_msg({monitor_down, _}, 1000, 5000),
     lists:foreach(fun(P) -> ?assertEqual(is_process_alive(P), false) end, PIDs).
+
+
+test_wheel(_Config) ->
+    exec:start([root, {user, "root"}, {limit_users, "root"}]),
+    exec:run("sleep 1000", [sync, stdout]).
