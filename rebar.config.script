@@ -4,7 +4,7 @@
 {CXX,Target,Sysroot} =
     case os:getenv("CXX") of
     false    ->
-        {"g++",erlang:system_info(system_architecture),""};
+        {"clang++",erlang:system_info(system_architecture),""};
     Compiler ->
         {Compiler,string:strip(os:cmd(Compiler ++ " -dumpmachine"),   right, $\n),
                   string:strip(os:cmd(Compiler ++ " -print-sysroot"), right, $\n)}
@@ -51,7 +51,7 @@ lists:keymerge(1,
                      {"darwin",  "CXXFLAGS", "$CXXFLAGS -DHAVE_SETREUID" ++ X64},
                      {"darwin",  "LDFLAGS",  "$LDFLAGS" ++ X64},
 
-                     {"freebsd",   "CXXFLAGS", "$CXXFLAGS -DHAVE_SETRESUID" ++ X64},
+                     {"freebsd",   "CXXFLAGS", "$CXXFLAGS -stdlib=libstdc++ -DHAVE_SETRESUID" ++ X64},
                      {"freebsd",   "LDFLAGS",  "$LDFLAGS" ++ X64},
 
                      {"linux",   "CXXFLAGS", "$CXXFLAGS -DHAVE_SETRESUID" ++ LinCXX},
