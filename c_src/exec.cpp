@@ -503,6 +503,8 @@ void initialize(int userid, bool use_alt_fds, bool enable_suid)
     // to be able to adjust niceness and run commands as other users.
     // unless run_as_root is set
     if (userid > 0 && enable_suid) {
+
+        // TODO JP. THIS IS AN UNREACHABLE if ...
         if (userid == 0) {
             fprintf(stderr, "When running as root, \"-user User\" or \"-root\" option must be provided!\r\n");
             exit(4);

@@ -311,6 +311,7 @@ start() ->
 
 -spec start(exec_options()) -> {ok, pid()} | {error, any()}.
 start(Options) when is_list(Options) ->
+    io:format(user, "exec:start Options: ~p~n", [Options]),
     gen_server:start({local, ?MODULE}, ?MODULE, [Options], []).
 
 %%-------------------------------------------------------------------------
@@ -411,11 +412,11 @@ stop_and_wait(Port, Timeout) when is_port(Port) ->
     stop_and_wait(OsPid, Timeout);
 
 stop_and_wait(OsPid, Timeout) when is_integer(OsPid) ->
-    case ets:lookup(exec_mon, OsPid) of
-    [{_, Pid}] ->
-        stop_and_wait(Pid, Timeout);
-    [] ->
-        {error, not_found}
+    Pid = gen_server:call(?MODULE, {pid, OsPid}),
+    case Pid of
+        undefined ->
+            {error, not_found};
+        Pid -> stop_and_wait(Pid, Timeout)
     end;
 
 stop_and_wait(Pid, Timeout) when is_pid(Pid) ->
@@ -668,8 +669,7 @@ init([Options]) ->
         undefined -> ok;
         _         -> error_logger:warning_msg(Msg, [])
         end,
-        Tab  = ets:new(exec_mon, [protected,named_table]),
-        {ok, #state{port=Port, limit_users=Users, debug=Debug, registry=Tab, root=Root}}
+        {ok, #state{port=Port, limit_users=Users, debug=Debug, registry=#{}, root=Root}}
     catch _:Reason ->
         {stop, ?FMT("Error starting port '~s': ~200p\n  ~s\n",
             [Exe, Reason, erlang:get_stacktrace()])}
@@ -698,10 +698,9 @@ handle_call({port, Instruction}, From, #state{last_trans=Last} = State) ->
         {reply, {error, Why}, State}
     end;
 
-handle_call({pid, OsPid}, _From, State) ->
-    case ets:lookup(exec_mon, OsPid) of
-    [{_, Pid}] -> {reply, Pid, State};
-    _          -> {reply, undefined, State}
+handle_call({pid, OsPid}, _From, #state{registry = Reg} = State) ->
+    case maps:get(OsPid, Reg, undefined) of
+        Pid -> {reply, Pid, State}
     end;
 
 handle_call(Request, _From, _State) ->
@@ -724,7 +723,7 @@ handle_cast(_Msg, State) ->
 %%          {stop, Reason, State}            (terminate/2 is called)
 %% @private
 %%----------------------------------------------------------------------
-handle_info({Port, {data, Bin}}, #state{port=Port, debug=Debug} = State) ->
+handle_info({Port, {data, Bin}}, #state{port=Port, debug=Debug, registry=Reg} = State) ->
     Msg = binary_to_term(Bin),
     debug(Debug, "~w got msg from port: ~p\n", [?MODULE, Msg]),
     case Msg of
@@ -732,20 +731,28 @@ handle_info({Port, {data, Bin}}, #state{port=Port, debug=Debug} = State) ->
         case get_transaction(State#state.trans, N) of
         {true, {Pid,_} = From, MonType, Sync, PidOpts, Q} ->
             NewReply = maybe_add_monitor(Reply, Pid, MonType, Sync, PidOpts, Debug),
-            gen_server:reply(From, NewReply);
+                NewState = case NewReply of
+                               {ok, LWP, OsPid, _Sync} -> PidMap = #{LWP => OsPid, OsPid => LWP},
+                                                          State#state{registry = maps:merge(Reg, PidMap)};
+                               _Else -> State
+                           end,
+                gen_server:reply(From, NewReply),
+                {noreply, NewState#state{trans=Q}};
         {false, Q} ->
-            ok
-        end,
-        {noreply, State#state{trans=Q}};
-    {0, {Stream, OsPid, Data}} when Stream =:= stdout; Stream =:= stderr ->
-        send_to_ospid_owner(OsPid, {Stream, Data}),
-        {noreply, State};
+                {noreply, State#state{trans=Q}}
+        end;
+    {0, {Stream, OsPid, _Data}} when Stream =:= stdout; Stream =:= stderr ->
+            case maps:get(OsPid, Reg, undefined) of
+                undefined -> ok;
+                Pid -> Pid ! Msg
+            end,
+            {noreply, State};
     {0, {exit_status, OsPid, Status}} ->
         debug(Debug, "Pid ~w exited with status: ~s{~w,~w}\n",
             [OsPid, if (((Status band 16#7F)+1) bsr 1) > 0 -> "signaled "; true -> "" end,
              (Status band 16#FF00 bsr 8), Status band 127]),
-        notify_ospid_owner(OsPid, Status),
-        {noreply, State};
+        NewState = notify_ospid_owner(OsPid, Status, State),
+        {noreply, NewState};
     {0, ok} ->
         {noreply, State};
     {0, Ignore} ->
@@ -759,10 +766,15 @@ handle_info({Port, {exit_status, Status}}, #state{port=Port} = State) ->
     {stop, {exit_status, Status}, State};
 handle_info({'EXIT', Port, Reason}, #state{port=Port} = State) ->
     {stop, Reason, State};
-handle_info({'EXIT', Pid, Reason}, State) ->
+handle_info({'EXIT', Pid, _Reason}, #state{registry = Reg} = State) ->
     % OsPid's Pid owner died. Kill linked OsPid.
-    do_unlink_ospid(Pid, Reason, State),
-    {noreply, State};
+    case maps:get(Pid, Reg, undefined) of
+        undefined -> {noreply, State};
+        OsPid    -> debug(State#state.debug, "Pid ~p died. Killing linked OsPid ~w\n", [Pid, OsPid]),
+                    erlang:port_command(State#state.port, term_to_binary({0, {stop, OsPid}})),
+                    {noreply, #state{registry = maps:without([Pid, OsPid], Reg)}}
+    end;
+
 handle_info(_Info, State) ->
     error_logger:info_msg("~w - unhandled message: ~p\n", [?MODULE, _Info]),
     {noreply, State}.
@@ -853,7 +865,6 @@ maybe_add_monitor({pid, OsPid}, Pid, MonType, Sync, PidOpts, Debug) when is_inte
     Self = self(),
     LWP  = spawn_link(fun() -> ospid_init(Pid, OsPid, MonType, Sync, Self, PidOpts, Debug) end),
     debug(Debug, "~w added monitor ~p for OsPid ~w", [?MODULE, LWP, OsPid]),
-    ets:insert(exec_mon, [{OsPid, LWP}, {LWP, OsPid}]),
     {ok, LWP, OsPid, Sync};
 maybe_add_monitor(Reply, _Pid, _MonType, _Sync, _PidOpts, _Debug) ->
     Reply.
@@ -928,49 +939,25 @@ ospid_deliver_output(DestPid, Msg) when is_pid(DestPid) ->
 ospid_deliver_output(DestFun, {Stream, OsPid, Data}) when is_function(DestFun) ->
     DestFun(Stream, OsPid, Data).
 
-notify_ospid_owner(OsPid, Status) ->
+notify_ospid_owner(OsPid, Status, #state{registry = Reg} = State) ->
     % See if there is a Pid owner of this OsPid. If so, sent the 'DOWN' message.
-    case ets:lookup(exec_mon, OsPid) of
-    [{_OsPid, Pid}] ->
-        unlink(Pid),
-        Pid ! {'DOWN', OsPid, {exit_status, Status}},
-        ets:delete(exec_mon, Pid),
-        ets:delete(exec_mon, OsPid);
-    [] ->
-        %error_logger:warning_msg("Owner ~w not found\n", [OsPid]),
-        ok
-    end.
-
-send_to_ospid_owner(OsPid, Msg) ->
-    case ets:lookup(exec_mon, OsPid) of
-    [{_, Pid}] -> Pid ! Msg;
-    _ -> ok
+    case maps:get(OsPid, Reg, undefined) of
+        undefined ->
+            %%error_logger:warning_msg("Owner ~w not found\n", [OsPid]),
+            State;
+        Pid ->
+            unlink(Pid),
+            Pid ! {'DOWN', OsPid, {exit_status, Status}},
+            State#state{registry = maps:without([Pid, OsPid], Reg)}
     end.
 
 debug(false, _, _) ->
     ok;
-debug(true, Fmt, Args) ->        
+debug(true, Fmt, Args) ->
     io:format(Fmt, Args).
 
-%%----------------------------------------------------------------------
-%% @spec (Pid::pid(), Action, State::#state{}) -> 
-%%          {ok, LastTok::integer(), LeftLinks::integer()}
-%% @doc Pid died or requested to unlink - remove linked Pid records and 
-%% optionally kill all OsPids linked to the Pid.
-%% @end
-%%----------------------------------------------------------------------
-do_unlink_ospid(Pid, _Reason, State) ->
-    case ets:lookup(exec_mon, Pid) of
-    [{_Pid, OsPid}] when is_integer(OsPid) ->
-        debug(State#state.debug, "Pid ~p died. Killing linked OsPid ~w\n", [Pid, OsPid]),
-        ets:delete(exec_mon, Pid),
-        ets:delete(exec_mon, OsPid),
-        erlang:port_command(State#state.port, term_to_binary({0, {stop, OsPid}}));
-    _ ->
-        ok 
-    end.
 
-get_transaction(Q, I) -> 
+get_transaction(Q, I) ->
     get_transaction(Q, I, Q).
 get_transaction(Q, I, OldQ) ->
     case queue:out(Q) of
@@ -981,36 +968,36 @@ get_transaction(Q, I, OldQ) ->
     {_, Q2} ->
         get_transaction(Q2, I, OldQ)
     end.
-    
+
 is_port_command({{run, Cmd, Options}, Link, Sync}, Pid, State) ->
     {PortOpts, Other} = check_cmd_options(Options, Pid, State, [], []),
     {ok, {run, Cmd, PortOpts}, Link, Sync, Other};
-is_port_command({list} = T, _Pid, _State) -> 
+is_port_command({list} = T, _Pid, _State) ->
     {ok, T, undefined, undefined, []};
-is_port_command({stop, OsPid}=T, _Pid, _State) when is_integer(OsPid) -> 
+is_port_command({stop, OsPid}=T, _Pid, _State) when is_integer(OsPid) ->
     {ok, T, undefined, undefined, []};
-is_port_command({stop, Pid}, _Pid, _State) when is_pid(Pid) ->
-    case ets:lookup(exec_mon, Pid) of
-    [{_StoredPid, OsPid}] -> {ok, {stop, OsPid}, undefined, undefined, []};
-    []              -> throw({error, no_process})
+is_port_command({stop, Pid}, _Pid, #state{registry = Reg}) when is_pid(Pid) ->
+    case maps:get(Pid, Reg, undefined) of
+        undefined -> throw({error, no_process});
+        OsPid -> {ok, {stop, OsPid}, undefined, undefined, []}
     end;
 is_port_command({{manage, OsPid, Options}, Link, Sync}, Pid, State) when is_integer(OsPid) ->
     {PortOpts, _Other} = check_cmd_options(Options, Pid, State, [], []),
     {ok, {manage, OsPid, PortOpts}, Link, Sync, []};
-is_port_command({send, Pid, Data}, _Pid, _State)
+is_port_command({send, Pid, Data}, _Pid, #state{registry = Reg})
   when is_pid(Pid), is_binary(Data) orelse Data =:= eof ->
-    case ets:lookup(exec_mon, Pid) of
-    [{Pid, OsPid}]  -> {ok, {stdin, OsPid, Data}};
-    []              -> throw({error, no_process})
+    case maps:get(Pid, Reg, undefined) of
+        undefined -> throw({error, no_process});
+        OsPid -> {ok, {stdin, OsPid, Data}}
     end;
 is_port_command({send, OsPid, Data}, _Pid, _State)
   when is_integer(OsPid), is_binary(Data) orelse Data =:= eof ->
     {ok, {stdin, OsPid, Data}};
-is_port_command({winsz, Pid, Rows, Cols}, _Pid, _State)
+is_port_command({winsz, Pid, Rows, Cols}, _Pid, #state{registry = Reg})
   when is_pid(Pid), is_integer(Rows), is_integer(Cols) ->
-    case ets:lookup(exec_mon, Pid) of
-    [{Pid, OsPid}]  -> {ok, {winsz, OsPid, Rows, Cols}};
-    []              -> throw({error, no_process})
+    case maps:get(Pid, Reg, undefined) of
+        undefined -> throw({error, no_process});
+        OsPid -> {ok, {winsz, OsPid, Rows, Cols}}
     end;
 is_port_command({winsz, OsPid, Rows, Cols}, _Pid, _State)
   when is_integer(OsPid), is_integer(Rows), is_integer(Cols) ->
@@ -1019,10 +1006,10 @@ is_port_command({kill, OsPid, Sig}=T, _Pid, _State) when is_integer(OsPid),is_in
     {ok, T, undefined, undefined, []};
 is_port_command({setpgid, OsPid, Gid}=T, _Pid, _State) when is_integer(OsPid),is_integer(Gid) -> 
     {ok, T, undefined, undefined, []};
-is_port_command({kill, Pid, Sig}, _Pid, _State) when is_pid(Pid),is_integer(Sig) -> 
-    case ets:lookup(exec_mon, Pid) of
-    [{Pid, OsPid}]  -> {ok, {kill, OsPid, Sig}, undefined, undefined, []};
-    []              -> throw({error, no_process})
+is_port_command({kill, Pid, Sig}, _Pid, #state{registry = Reg}) when is_pid(Pid),is_integer(Sig) ->
+    case maps:get(Pid, Reg, undefined) of
+        undefined -> throw({error, no_process});
+        OsPid ->  {ok, {kill, OsPid, Sig}, undefined, undefined, []}
     end;
 is_port_command({debug, Level}=T, _Pid, _State) when is_integer(Level),Level >= 0,Level =< 10 -> 
     {ok, T, undefined, undefined, []}.
@@ -1139,14 +1126,7 @@ exec_test_() ->
         fun()    -> {ok, Pid} = exec:start([{debug, 0}]), Pid end,
         fun(Pid) -> exit(Pid, kill) end,
         [
-            ?tt(test_monitor()),
-            ?tt(test_sync()),
-            ?tt(test_winsz()),
-            ?tt(test_stdin()),
-            ?tt(test_stdin_eof()),
-            ?tt(test_std(stdout)),
-            ?tt(test_std(stderr)),
-            ?tt(test_cmd()),
+           ?tt(test_cmd()),
             ?tt(test_executable()),
             ?tt(test_redirect()),
             ?tt(test_env()),
