@@ -311,7 +311,6 @@ start() ->
 
 -spec start(exec_options()) -> {ok, pid()} | {error, any()}.
 start(Options) when is_list(Options) ->
-    io:format(user, "exec:start Options: ~p~n", [Options]),
     gen_server:start({local, ?MODULE}, ?MODULE, [Options], []).
 
 %%-------------------------------------------------------------------------
@@ -644,11 +643,11 @@ init([Options]) ->
             end,
     IsRoot= os:getenv("USER") =:= "root",
     {Exe,Msg} =
-            if (SUID orelse SGID orelse Root orelse IsRoot) andalso User =:= undefined ->
-                % Don't allow to run port program with SUID bit without effective user set!
-                throw("Port program " ++ Exe0 ++
-                      " with SUID bit set is not allowed to run without setting effective user!");
-            not Root, User =/= undefined ->
+            %% if (SUID orelse SGID orelse Root orelse IsRoot) andalso User =:= undefined ->
+            %%     % Don't allow to run port program with SUID bit without effective user set!
+            %%     throw("Port program " ++ Exe0 ++
+            %%           " with SUID bit set is not allowed to run without setting effective user!");
+            if not Root, User =/= undefined ->
                 % Running as another effective user
                 U = if is_atom(User) -> atom_to_list(User); true -> User end,
                 {lists:append(["/usr/local/bin/sudo -u ", U, " ", Exe0, Args]), undefined};
@@ -661,6 +660,7 @@ init([Options]) ->
     try
         debug(Debug, "exec: ~s~sport program: ~s\n~s",
             [if SUID -> "[SUID] "; true -> "" end,
+             if SGID -> "[SGID] "; true -> "" end,
              if (Root orelse IsRoot) andalso User =:= undefined -> "[ROOT] "; true -> "" end, Exe,
              if Env =/= [] -> "  env: "++?FMT("~p", Env)++"\n"; true -> "" end]),
         PortOpts = Env ++ [binary, exit_status, {packet, 2}, hide],
@@ -1144,7 +1144,7 @@ exec_test_() ->
     }.
 
 exec_run_many_test() ->
-    ?assertMatch({ok,[{io_ops,300},{success,300}]}, test_exec:run(300)).
+    ?assertMatch({ok,[{io_ops,100},{success,100}]}, test_exec:run(100)).
 
 test_monitor() ->
     {ok, P, _} = exec:run("echo ok", [{stdout, null}, monitor]),
@@ -1210,15 +1210,15 @@ test_std(Stream) ->
 test_cmd() ->
     % Cmd given as string
     ?assertMatch(
-        {ok, [{stdout, [<<"ok\n">>]}]},
-        exec:run("/bin/echo ok", [sync, stdout])),
+        {ok, [{stdout, [<<"1\n">>]}]},
+        exec:run("/bin/echo 1", [sync, stdout])),
     % Cmd given as list
     ?assertMatch(
-        {ok, [{stdout, [<<"ok\n">>]}]},
-        exec:run(["/bin/bash", "-c", "echo ok"], [sync, stdout])),
+        {ok, [{stdout, [<<"2\n">>]}]},
+        exec:run(["/bin/bash", "-c", "echo 2"], [sync, stdout])),
     ?assertMatch(
-        {ok, [{stdout, [<<"ok\n">>]}]},
-        exec:run(["/bin/echo", "ok"], [sync, stdout])).
+        {ok, [{stdout, [<<"3\n">>]}]},
+        exec:run(["/bin/echo", "3"], [sync, stdout])).
 
 test_executable() ->
     % Cmd given as string
@@ -1231,13 +1231,13 @@ test_executable() ->
         end),
 
     ?assertMatch(
-        {ok, [{stdout,[<<"ok\n">>]}]},
-        exec:run("echo ok", [sync, {executable, "/bin/sh"}, stdout, stderr])),
+        {ok, [{stdout,[<<"4\n">>]}]},
+        exec:run("echo 4", [sync, {executable, "/bin/sh"}, stdout, stderr])),
     
     % Cmd given as list
     ?assertMatch(
-        {ok, [{stdout,[<<"ok\n">>]}]},
-        exec:run(["/bin/bash", "-c", "/bin/echo ok"],
+        {ok, [{stdout,[<<"5\n">>]}]},
+        exec:run(["/bin/bash", "-c", "/bin/echo 5"],
                  [sync, {executable, "/bin/sh"}, stdout, stderr])),
     ?assertMatch(
         {ok, [{stdout,[<<"XYZ\n">>]}]},
@@ -1278,16 +1278,15 @@ test_pty() ->
         exec:run("tty", [stdin, stdout, sync])),
     ?assertMatch({ok,[{stdout,[<<"/dev/", _/binary>>]}]},
         exec:run("tty", [stdin, stdout, pty, sync])),
-    {ok, P, I} = exec:run("/bin/bash --norc -i", [stdin, stdout, pty, monitor]),
-    exec:send(I, <<"echo ok\n">>),
+    {ok, P, I} = exec:run("/usr/local/bin/bash --norc -i", [stdin, stdout, pty, monitor]),
+    exec:send(I, <<"echo 6\n">>),
     receive
-    {stdout, I, <<"echo ok\r\n">>} ->
-        ?receiveMatch({stdout, I, <<"ok\r\n">>}, 1000);
-    {stdout, I, <<"ok\r\n">>} ->
-        ok
-    after 1000 ->
-        ?assertMatch({stdout, I, <<"ok\r\n">>}, timeout)
+    {stdout, I, <<"echo 6\r\n">>} ->
+            ?receiveMatch({stdout, I, <<"6\r\n">>}, 3000)
+    after 3000 ->
+        ?assertMatch({stdout, I, <<"echo 6\r\n">>}, timeout)
     end,
+
     exec:send(I, <<"exit\n">>),
     ?receiveMatch({'DOWN', _, process, P, normal}, 1000).
 

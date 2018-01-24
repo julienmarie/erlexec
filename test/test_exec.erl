@@ -77,7 +77,7 @@ init([Owner, Count, DelayMS]) ->
     ok = file:write_file(?SCRIPT,
         <<"#!/bin/bash\n"
           "echo 'This is a test script $$'\n"
-          "sleep $[ ( $RANDOM % ", Delay/binary, " ) + 1 ]s\n"
+          "sleep $[ ( $RANDOM % ", Delay/binary, " ) + 1 ]\n"
           "exit 12\n">>),
     file:change_mode(?SCRIPT, 8#755),
     self() ! start_child,
