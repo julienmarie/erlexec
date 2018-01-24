@@ -741,10 +741,10 @@ handle_info({Port, {data, Bin}}, #state{port=Port, debug=Debug, registry=Reg} = 
         {false, Q} ->
                 {noreply, State#state{trans=Q}}
         end;
-    {0, {Stream, OsPid, _Data}} when Stream =:= stdout; Stream =:= stderr ->
+    {0, {Stream, OsPid, Data}} when Stream =:= stdout; Stream =:= stderr ->
             case maps:get(OsPid, Reg, undefined) of
                 undefined -> ok;
-                Pid -> Pid ! Msg
+                Pid -> Pid ! {Stream, Data}
             end,
             {noreply, State};
     {0, {exit_status, OsPid, Status}} ->
