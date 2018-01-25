@@ -1075,10 +1075,9 @@ check_cmd_options([{Std, I}=H|T], Pid, State, PortOpts, OtherOpts)
 check_cmd_options([{group, I}=H|T], Pid, State, PortOpts, OtherOpts) when is_integer(I), I >= 0; is_list(I) ->
     check_cmd_options(T, Pid, State, [H|PortOpts], OtherOpts);
 check_cmd_options([{user, U}=H|T], Pid, State, PortOpts, OtherOpts) when is_list(U), U =/= "" ->
-    io:format(user, "exec:check_cmd_options limit:users: ~p~n", [State#state.limit_users]),
     case lists:member(U, State#state.limit_users) of
-    true  -> check_cmd_options(T, Pid, State, [H|PortOpts], OtherOpts);
-    false -> throw({error, ?FMT("User ~s is not allowed to run commands!", [U])})
+        true  -> check_cmd_options(T, Pid, State, [H|PortOpts], OtherOpts);
+        false -> throw({error, ?FMT("User ~s is not allowed to run commands!", [U])})
     end;
 check_cmd_options([Other|_], _Pid, _State, _PortOpts, _OtherOpts) ->
     throw({error, {invalid_option, Other}});
