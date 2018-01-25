@@ -406,10 +406,6 @@ stop(Port) when is_port(Port) ->
 %%-------------------------------------------------------------------------
 
 -spec stop_and_wait(pid() | ospid() | port(), integer()) -> term() | {error, any()}.
-stop_and_wait(Port, Timeout) when is_port(Port) ->
-    {os_pid, OsPid} = erlang:port_info(Port, os_pid),
-    stop_and_wait(OsPid, Timeout);
-
 stop_and_wait(OsPid, Timeout) when is_integer(OsPid) ->
     Pid = gen_server:call(?MODULE, {pid, OsPid}),
     case Pid of
@@ -426,8 +422,8 @@ stop_and_wait(Pid, Timeout) when is_pid(Pid) ->
     end;
 
 stop_and_wait(Port, Timeout) when is_port(Port) ->
-    {os_pid, Pid} = erlang:port_info(Port, os_pid),
-    stop_and_wait(Pid, Timeout).
+    {os_pid, OsPid} = erlang:port_info(Port, os_pid),
+    stop_and_wait(OsPid, Timeout).
 
 %%-------------------------------------------------------------------------
 %% @doc Get `OsPid' of the given Erlang `Pid'.  The `Pid' must be created
@@ -1079,6 +1075,7 @@ check_cmd_options([{Std, I}=H|T], Pid, State, PortOpts, OtherOpts)
 check_cmd_options([{group, I}=H|T], Pid, State, PortOpts, OtherOpts) when is_integer(I), I >= 0; is_list(I) ->
     check_cmd_options(T, Pid, State, [H|PortOpts], OtherOpts);
 check_cmd_options([{user, U}=H|T], Pid, State, PortOpts, OtherOpts) when is_list(U), U =/= "" ->
+    io:format(user, "exec:check_cmd_options limit:users: ~p~n", [State#state.limit_users]),
     case lists:member(U, State#state.limit_users) of
     true  -> check_cmd_options(T, Pid, State, [H|PortOpts], OtherOpts);
     false -> throw({error, ?FMT("User ~s is not allowed to run commands!", [U])})
