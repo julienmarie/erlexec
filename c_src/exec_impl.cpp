@@ -550,7 +550,9 @@ int stop_child(CmdInfo& ci, int transId, const TimeVal& now, bool notify)
 {
     bool use_kill = false;
 
-    if (ci.sigkill)     // Kill signal already sent
+    if (ci.managed)          // DON'T KILL "managed" process
+      return 0;
+    else if (ci.sigkill)     // Kill signal already sent
         return 0;
     else if (ci.kill_cmd_pid > 0 || ci.sigterm) {
         // There was already an attempt to kill it.
