@@ -42,9 +42,9 @@
 
 %% External exports
 -export([
-    start/0, start/1, start_link/1, run/2, run_link/2, manage/2, send/2, winsz/3,
-    which_children/0, kill/2,       setpgid/2, stop/1, stop_and_wait/2,
-    ospid/1, pid/1,   status/1,     signal/1,  debug/1
+    start/0, start/1, start_link/1, run/2, run_link/2, manage/2, unmanage/2,
+    send/2, winsz/3, which_children/0, kill/2, setpgid/2, stop/1, stop_and_wait/2,
+    ospid/1, pid/1, status/1, signal/1, debug/1
 ]).
 
 %% Internal exports
@@ -354,6 +354,19 @@ manage(Pid, Options) when is_integer(Pid) ->
 manage(Port, Options) when is_port(Port) ->
     {os_pid, OsPid} = erlang:port_info(Port, os_pid),
     manage(OsPid, Options).
+
+%%-------------------------------------------------------------------------
+%% @doc Stop Managing a process. `OsPid' is the OS process
+%%      identifier of the external OS process or an Erlang `Port' that
+%%      is managed by erlexec.
+%% @end
+%%-------------------------------------------------------------------------
+-spec unmanage(ospid() | port(), Options::cmd_options()) -> ok | {error, any()}.
+unmanage(OsPid, Options) when is_integer(OsPid) ->
+    do_run({unmanage, OsPid}, Options);
+unmanage(Port, Options) when is_port(Port) ->
+    {os_pid, OsPid} = erlang:port_info(Port, os_pid),
+    unmanage(OsPid, Options).
 
 %%-------------------------------------------------------------------------
 %% @doc Get a list of children managed by port program.
@@ -671,6 +684,15 @@ init([Options]) ->
             [Exe, Reason, erlang:get_stacktrace()])}
     end.
 
+
+handle_call({port, {{unmanage, OsPid}, _, _}}, _From, #state{registry=Reg} = State) ->
+    case maps:get(OsPid, Reg, undefined) of
+        undefined -> {reply, {error, not_found}, State};
+        Pid -> unlink(Pid),
+               exit(Pid, shutdown),
+               {reply, ok, State#state{registry=maps:without([Pid, OsPid], Reg)}}
+    end;
+
 %%----------------------------------------------------------------------
 %% Func: handle_call/3
 %% Returns: {reply, Reply, State}          |
@@ -915,6 +937,9 @@ ospid_loop({Pid, OsPid, Parent, StdOut, StdErr, IsMon, Debug} = State) ->
         % Pid died
         debug(Debug, "~w ~w got exit from linked ~w: ~p\n", [self(), OsPid, Pid, Reason]),
         exit({owner_died, Pid, Reason});
+    {'EXIT', Parent, Reason} when Reason =:= normal; Reason =:= shutdown ->
+        % Normal exit from Parent (unmanage)
+        debug(Debug, "~w ~w got exit from parent ~w: ~p\n", [self(), OsPid, Parent, Reason]);
     {'EXIT', Parent, Reason} ->
         % Port program died
         debug(Debug, "~w ~w got exit from parent ~w: ~p\n", [self(), OsPid, Parent, Reason]),
