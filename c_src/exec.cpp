@@ -594,6 +594,8 @@ int finalize(fd_set& readfds)
     TimeVal now(TimeVal::NOW);
     TimeVal deadline(now, FINALIZE_DEADLINE_SEC, 0);
 
+    // TODO JP. Err, I think my hack to exec_impl:stop_child() NOT to kill managed process is back-firing here...
+    //          I believe it will always hang/timeout when we have existing managed process still alive because of that.
     while (children.size() > 0) {
         now.now();
         if (children.size() > 0 || !exited_children.empty()) {

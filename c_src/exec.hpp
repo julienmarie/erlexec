@@ -81,7 +81,7 @@ enum ConstsT {
     SLEEP_TIMEOUT_SEC       = 5,
 
     // Number of seconds allowed for cleanup before exit
-    FINALIZE_DEADLINE_SEC   = 10,
+    FINALIZE_DEADLINE_SEC   = 5,
 
     SIGCHLD_MAX_SIZE        = 4096
 };
