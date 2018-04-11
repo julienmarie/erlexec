@@ -4,7 +4,7 @@
               {id,"erlexec"},
               {modules,[]},
               {registered,[exec]},
-              {applications,[kernel,stdlib]},
+              {applications,[kernel,stdlib,lager,gproc]},
               {mod,{exec_app,[]}},
               {env,[]},
               {maintainers,["Serge Aleynikov"]},
