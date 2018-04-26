@@ -20,7 +20,7 @@
 
 -record(state, {name, opts, pids}).
 
--type sproc() :: {sexec, string()} | {sexec, atom()}.
+-type sproc() :: term().
 
 %%%%%%%%%%%
 %%% API %%%
