@@ -78,7 +78,7 @@ enum ConstsT {
     KILL_TIMEOUT_SEC        = 5,
 
     // Max number of seconds to sleep in the select() call
-    SLEEP_TIMEOUT_SEC       = 5,
+    SLEEP_TIMEOUT_SEC       = 1,
 
     // Number of seconds allowed for cleanup before exit
     FINALIZE_DEADLINE_SEC   = 1,
