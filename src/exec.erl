@@ -575,7 +575,7 @@ default() ->
 %% @private
 default(portexe) -> 
     % Retrieve the Priv directory
-    '/usr/local/bin/exec-port';
+    "/usr/local/bin/exec-port";
     %case code:priv_dir(erlexec) of
     %{error, _} ->
     %    error_logger:warning_msg("Priv directory not available", []),
